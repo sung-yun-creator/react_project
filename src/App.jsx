@@ -6,7 +6,10 @@ function App() {
     console.log("목록 데이터 요청...");
 
     // 로컬테스트
-    const SEVER_URL = "http://localhost:3000/api/list";
+    // const SEVER_URL = "http://localhost:3000/api/list";
+
+    // 배포용
+    const SEVER_URL = "/api/list";
 
     axios.get(SEVER_URL)
       .then(res => {
