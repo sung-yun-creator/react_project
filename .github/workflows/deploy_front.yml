@@ -1,0 +1,96 @@
+# 워크플로우 흐름
+# - Github Push -> React 파일 빌드 -> dist 폴더 생성 -> pulic 서버 접속
+# -> 기존 파일 삭제 -> 새로운 dist 폴더 업로드 -> nginx reload
+
+name: Deploy Frontend (Github -> Public Nginx)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "**" # 어떤 파일이 바뀌든 모두 실행
+  workflow_dispatch:
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # 1) Github 저장소의 현재 코드 -> 작업용 컴퓨터로 가져오는 작업
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) (Github 우분투 컴퓨터) React/Vite 빌드에 필요한 Node.js 설치
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      # 3) React 파일 -> 빌드 -> dist 폴더 생성하는 작업
+      # - set -e : 중간에 에러가 발생하면 즉시 작업을 중단
+      # - nmp ci : package-lock.json 기준으로 패키지 설치
+      # - test -d dist : dist 폴더가 생성되었는지 체크 -> 실패치 즉시 작업 중단
+      - name: Build React (Vite)
+        run: |
+          set -e
+          npm ci
+          npm run build
+          test -d dist
+      
+      # 4) Public 서버에 접속 -> nginx 웹 루트 폴더가 있는지 확인
+      # - nginx가 정적 파일을 서버스할 폴더 생성
+      # - 이미 있으면 생성 안함
+      - name: Ensure web root exists on Public
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PUBLIC_HOST }}
+          username: ${{ secrets.PUBLIC_USER }}
+          key: ${{ secrets.PRIVATE_SSH_KEY }}
+          script: |
+            set -e
+            sudo mkdir -p /usr/share/nginx/html
+
+      # 5) 기존 프론트 파일 삭제
+      # 주의 : /user/share/nginx/html 프로젝트 전용일 때만 안전함 
+      - name: Clean old frontend files
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PUBLIC_HOST }}
+          username: ${{ secrets.PUBLIC_USER }}
+          key: ${{ secrets.PRIVATE_SSH_KEY }}
+          script: |
+            set -e
+            sudo find /usr/share/nginx/html -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      
+      # 6) 빌드 결과물(dist폴더)을 서버로 업로드
+      # source: "dist/**" -> Github Actions 작업 컴퓨터 안에 있는 dist 폴더의 모든 파일을 업로드
+      # target: "/usr/share/nginx/html" -> 서버에서 업로드할 위치
+      # strip_components: 1 -> dist 폴더 자체는 빼고 그 안의 파일만 업로드
+      #  ex) dist/index.html -> /usr/share/nginx/html/index.html
+      - name: Upload dist to Public
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PUBLIC_HOST }}
+          username: ${{ secrets.PUBLIC_USER }}
+          key: ${{ secrets.PRIVATE_SSH_KEY }}
+          source: "dist/**"
+          target: "/usr/share/nginx/html"
+          strip_components: 1
+
+      # 7) nginx 설정이 정상인지 검사(nginx -t)-> 다시 반영(reload) 
+      # restart와 reload의 차이 : 서버를 중단하지 않고 설정값만 반영할 수 있다는 점
+      - name: Reload Nginx
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PUBLIC_HOST }}
+          username: ${{ secrets.PUBLIC_USER }}
+          key: ${{ secrets.PRIVATE_SSH_KEY }}
+          script: |
+            set -e
+            sudo nginx -t
+            sudo systemctl reload nginx
