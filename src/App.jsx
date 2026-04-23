@@ -35,7 +35,7 @@ function App() {
       <Container>
         
       <h1>NCP 배포 서비스(CI/CD 자동배포)</h1>
-      <button onClick={getList}>목록조회</button>
+      <button className="btn btn-primary" onClick={getList}>목록조회</button>
 
       <Table striped>
         <thead>
